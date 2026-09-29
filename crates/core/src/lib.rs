@@ -7,6 +7,7 @@ pub mod cache;
 pub mod deezer;
 pub mod error;
 pub mod http;
+pub mod library;
 pub mod matcher;
 pub mod model;
 pub mod normalize;
