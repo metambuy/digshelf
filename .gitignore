@@ -1,0 +1,26 @@
+# Build
+/target/
+**/target/
+
+# Output and caches
+/out/
+out/
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.db
+*.db-*
+cache/
+
+# Local config (may contain personal paths / user IDs)
+digshelf.toml
+config.toml
+.env
+.env.*
+*.local.*
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
