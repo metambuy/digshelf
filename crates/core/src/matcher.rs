@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use strsim::jaro_winkler;
+use strsim::normalized_levenshtein as similarity;
 
 use crate::model::{
     Candidate, DeezerTrack, LocalTrack, MatchMethod, MatchResult, MatchStatus, ScoreBreakdown,
@@ -39,13 +39,16 @@ const W_ARTIST: f64 = 0.25;
 const W_VERSION: f64 = 0.20;
 const W_DURATION: f64 = 0.15;
 const TITLE_GATE: f64 = 0.80;
-const ARTIST_GATE: f64 = 0.60;
+const ARTIST_GATE: f64 = 0.70;
 /// Durations further apart than this score 0.
 const DURATION_ZERO_AT_SECS: u32 = 15;
 
 #[derive(Debug, Clone)]
 struct Prepared {
     title: TitleParts,
+    /// Local files only: a title parsed from the file name when it differs
+    /// from the tag (catches mistagged titles such as "Artist - Title…").
+    alt_title: Option<TitleParts>,
     artists: Vec<String>,
     artist_full: String,
     isrc: Option<String>,
@@ -56,6 +59,7 @@ impl Prepared {
     fn new(title: &str, artist: &str, isrc: Option<&str>, duration: Option<u32>) -> Self {
         Self {
             title: split_title(title),
+            alt_title: None,
             artists: split_artists(artist),
             artist_full: normalize(artist),
             isrc: isrc.and_then(normalize_isrc),
@@ -64,35 +68,39 @@ impl Prepared {
     }
 
     fn from_local(t: &LocalTrack) -> Self {
-        let (mut title, mut artist) = (t.title.clone(), t.artist.clone());
-        // Untagged file: fall back to an "Artist - Title" file name.
-        if title.is_none() || artist.is_none() {
-            let stem = t
-                .path
-                .file_stem()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            // Drop a leading track number like "01 " or "01. ".
-            let stem = stem
-                .trim_start_matches(|c: char| c.is_ascii_digit())
-                .trim_start_matches(['.', ' ', '-', '_'])
-                .to_string();
-            match stem.split_once(" - ") {
-                Some((a, ti)) => {
-                    artist.get_or_insert_with(|| a.to_string());
-                    title.get_or_insert_with(|| ti.to_string());
-                }
-                None => {
-                    title.get_or_insert(stem);
-                }
-            }
-        }
-        Self::new(
-            title.as_deref().unwrap_or(""),
-            artist.as_deref().unwrap_or(""),
+        let stem = t
+            .path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        // Drop a leading track number like "01 ", "1-13 " or "01. ".
+        let stem = stem
+            .trim_start_matches(|c: char| c.is_ascii_digit() || c == '-')
+            .trim_start_matches(['.', ' ', '-', '_']);
+        // "Artist - Title" (or "Artist - Album - Title"): the last part is the title.
+        let (name_artist, name_title) = match stem.split_once(" - ") {
+            Some((a, rest)) => (Some(a), rest.rsplit(" - ").next().unwrap_or(rest)),
+            None => (None, stem),
+        };
+
+        let artist = t.artist.as_deref().or(name_artist).unwrap_or("");
+        let mut p = Self::new(
+            t.title.as_deref().unwrap_or(name_title),
+            artist,
             t.isrc.as_deref(),
             t.duration_secs(),
-        )
+        );
+        if t.title.is_some() {
+            let alt = split_title(name_title);
+            if !alt.base.is_empty() && alt.base != p.title.base {
+                p.alt_title = Some(alt);
+            }
+        }
+        p
+    }
+
+    fn titles(&self) -> impl Iterator<Item = &TitleParts> {
+        std::iter::once(&self.title).chain(self.alt_title.as_ref())
     }
 
     fn all_names(&self) -> impl Iterator<Item = &String> {
@@ -118,7 +126,11 @@ impl Matcher {
             if let Some(isrc) = &p.isrc {
                 by_isrc.entry(isrc.clone()).or_default().push(i);
             }
-            let tokens: HashSet<&str> = p.title.base.split(' ').filter(|t| !t.is_empty()).collect();
+            let tokens: HashSet<&str> = p
+                .titles()
+                .flat_map(|t| t.base.split(' '))
+                .filter(|t| !t.is_empty())
+                .collect();
             for tok in tokens {
                 by_token.entry(tok.to_string()).or_default().push(i);
             }
@@ -156,7 +168,14 @@ impl Matcher {
         let best = self
             .candidates(&dz)
             .into_iter()
-            .filter_map(|i| self.score(&dz, &self.prepared[i]).map(|s| (i, s)))
+            .filter_map(|i| {
+                let local = &self.prepared[i];
+                local
+                    .titles()
+                    .filter_map(|title| self.score(&dz, local, title))
+                    .max_by(|a, b| a.0.total_cmp(&b.0))
+                    .map(|s| (i, s))
+            })
             .max_by(|a, b| a.1 .0.total_cmp(&b.1 .0));
 
         let Some((local_index, (confidence, scores))) = best else {
@@ -207,8 +226,13 @@ impl Matcher {
         out
     }
 
-    fn score(&self, dz: &Prepared, local: &Prepared) -> Option<(f64, ScoreBreakdown)> {
-        let title = jaro_winkler(&dz.title.base, &local.title.base);
+    fn score(
+        &self,
+        dz: &Prepared,
+        local: &Prepared,
+        local_title: &TitleParts,
+    ) -> Option<(f64, ScoreBreakdown)> {
+        let title = similarity(&dz.title.base, &local_title.base);
         if title < TITLE_GATE {
             return None;
         }
@@ -216,7 +240,7 @@ impl Matcher {
         if artist < ARTIST_GATE {
             return None;
         }
-        let version = version_score(&dz.title.version, &local.title.version);
+        let version = version_score(&dz.title.version, &local_title.version);
         let duration_delta = match (dz.duration, local.duration) {
             (Some(a), Some(b)) => Some(a.abs_diff(b)),
             _ => None,
@@ -254,10 +278,10 @@ fn artist_score(a: &Prepared, b: &Prepared) -> f64 {
     if a.artists.iter().any(|n| b_all.contains(n)) || b.artists.iter().any(|n| a_all.contains(n)) {
         return 1.0;
     }
-    let mut best = jaro_winkler(&a.artist_full, &b.artist_full);
+    let mut best = similarity(&a.artist_full, &b.artist_full);
     for x in &a.artists {
         for y in &b.artists {
-            best = best.max(jaro_winkler(x, y));
+            best = best.max(similarity(x, y));
         }
     }
     best
@@ -267,7 +291,7 @@ fn version_score(a: &str, b: &str) -> f64 {
     match (a.is_empty(), b.is_empty()) {
         (true, true) => 1.0,
         (false, false) => {
-            let s = jaro_winkler(a, b);
+            let s = similarity(a, b);
             if s >= 0.85 {
                 1.0
             } else {
@@ -402,6 +426,59 @@ mod tests {
             200,
         );
         let r = run(&[l], &dz("Glass Rooms", "Vela Nine", 200, None));
+        assert_eq!(r.status, MatchStatus::Owned);
+    }
+
+    #[test]
+    fn shared_prefix_is_not_enough() {
+        // Regression: Jaro-Winkler's prefix bonus made these look similar.
+        let l = local("/m/a.mp3", Some("I Can't Stay"), Some("Vela Nine"), 224);
+        let r = run(&[l], &dz("(I Can't Get No) Sleep", "Vela Nine", 224, None));
+        assert_eq!(r.status, MatchStatus::Missing);
+        let l = local("/m/a.mp3", Some("The Fence"), Some("Kora Blue"), 112);
+        let r = run(&[l], &dz("The Lantern", "Kona Blues", 112, None));
+        assert_eq!(r.status, MatchStatus::Missing);
+    }
+
+    #[test]
+    fn cover_by_other_artist_is_missing() {
+        let l = local(
+            "/m/a.mp3",
+            Some("Blue Meadows"),
+            Some("Tessa Crane and the Harbour Lights"),
+            174,
+        );
+        let r = run(
+            &[l],
+            &dz("Blue Meadows", "Ronan V. & the K.L.'s", 174, None),
+        );
+        assert_eq!(r.status, MatchStatus::Missing);
+    }
+
+    #[test]
+    fn truncated_tag_title_still_matches() {
+        let l = local(
+            "/m/a.mp3",
+            Some("paper lanterns over the rive"),
+            Some("Ana Luz"),
+            162,
+        );
+        let r = run(
+            &[l],
+            &dz("Paper Lanterns Over the River", "Ana Luz", 162, None),
+        );
+        assert_eq!(r.status, MatchStatus::Owned);
+    }
+
+    #[test]
+    fn mistagged_title_falls_back_to_file_name() {
+        let l = local(
+            "/m/Ana Luz - Tout Va Bien Ce Soir.mp3",
+            Some("Ana Luz - Tout Va Bien Ce"),
+            Some("Ana Luz"),
+            142,
+        );
+        let r = run(&[l], &dz("Tout va bien ce soir", "Ána Luz", 140, None));
         assert_eq!(r.status, MatchStatus::Owned);
     }
 

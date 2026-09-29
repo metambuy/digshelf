@@ -83,13 +83,14 @@ mtime and size match, and rows for files that no longer exist are deleted after 
 4. **Fuzzy**: candidate local tracks come from an inverted index on base-title
    tokens (the two rarest tokens of the Deezer title), which avoids an
    O(playlist × library) scan. Each candidate is scored as follows:
-   - `title` = Jaro-Winkler(base titles)
-   - `artist` = best Jaro-Winkler across the artist-name sets (1.0 if any
+   - `title` = normalised Levenshtein similarity of base titles (Jaro-Winkler
+     was tried first; its prefix bonus matched "I Can't Stay" to "I Can't Get No …")
+   - `artist` = best similarity across the artist-name sets (1.0 if any
      name matches exactly)
    - `version` = 1.0 if both are empty or similar (≥ 0.85); 0.3 if only one side
-     has a version (e.g. remix vs original); otherwise Jaro-Winkler
+     has a version (e.g. remix vs original); otherwise their similarity
    - `duration` = 1.0 within ±3 s, falling linearly to 0 at ±15 s; 0.7 if unknown
-   - gates: title < 0.80 or artist < 0.60 → discarded
+   - gates: title < 0.80 or artist < 0.70 → discarded
    - `confidence = 0.40·title + 0.25·artist + 0.20·version + 0.15·duration`
 5. **Decision**:
    - Owned: ISRC match, or confidence ≥ 0.92 **and** duration within ±3 s
