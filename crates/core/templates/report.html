@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>digshelf report</title>
+<style>
+:root {
+  --bg: #fafaf8; --fg: #1d1d1f; --muted: #6b6b70; --line: #e4e4e0; --card: #ffffff;
+  --owned: #2f7d4f; --uncertain: #b26b00; --missing: #b3261e; --accent: #3558c7;
+  --chip: #f0f0ec;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161618; --fg: #ececec; --muted: #9a9aa0; --line: #2c2c30; --card: #1e1e21;
+    --owned: #5cc28a; --uncertain: #e9a23b; --missing: #ef6b61; --accent: #8aa4ff;
+    --chip: #2a2a2e;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg);
+  font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.wrap { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+header h1 { margin: 0 0 4px; font-size: 24px; }
+.note { color: var(--muted); font-size: 13px; margin: 0; }
+.totals { display: flex; gap: 12px; flex-wrap: wrap; margin: 18px 0 8px; }
+.stat { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; min-width: 120px; }
+.stat b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
+.stat span { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.stat.owned b { color: var(--owned); } .stat.uncertain b { color: var(--uncertain); } .stat.missing b { color: var(--missing); }
+nav.toc { margin: 20px 0 28px; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; }
+nav.toc a { display: block; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; color: var(--fg); }
+nav.toc a:hover { border-color: var(--accent); text-decoration: none; }
+.bar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--chip); margin-top: 6px; }
+.bar i { display: block; }
+.bar .o { background: var(--owned); } .bar .u { background: var(--uncertain); } .bar .m { background: var(--missing); }
+.counts { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+section.pl { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px; margin-bottom: 24px; }
+section.pl h2 { margin: 0 0 2px; font-size: 19px; }
+.tabs { display: flex; gap: 6px; margin: 14px 0 12px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.tabs button { font: inherit; background: none; border: 0; border-bottom: 2px solid transparent; padding: 6px 10px; cursor: pointer; color: var(--muted); }
+.tabs button[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent); font-weight: 600; }
+.tabs .n { font-variant-numeric: tabular-nums; margin-left: 4px; }
+.panel[hidden] { display: none; }
+.album { border-top: 1px solid var(--line); padding: 12px 0; }
+.album:first-child { border-top: 0; padding-top: 0; }
+.album h3 { margin: 0; font-size: 15px; }
+.album h3 small { color: var(--muted); font-weight: normal; }
+.links { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.links a { font-size: 12px; background: var(--chip); border-radius: 999px; padding: 2px 9px; }
+.album ol { margin: 8px 0 0; padding-left: 22px; }
+.album li { padding: 3px 0; }
+.meta { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; vertical-align: top; padding: 7px 8px; border-top: 1px solid var(--line); }
+th { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; border-top: 0; }
+td.num { color: var(--muted); font-variant-numeric: tabular-nums; width: 1%; }
+.path { font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); word-break: break-all; }
+.badge { display: inline-block; font-size: 11px; border-radius: 4px; padding: 1px 6px; background: var(--chip); font-variant-numeric: tabular-nums; }
+.badge.isrc { color: var(--owned); }
+.badge.warn { color: var(--uncertain); }
+.empty { color: var(--muted); font-style: italic; padding: 8px 0; }
+.scroll { overflow-x: auto; }
+@media (max-width: 640px) { .hide-sm { display: none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>digshelf report</h1>
+  <p class="note">Store links open search pages in your browser. digshelf never downloads audio, scrapes stores or makes purchases.</p>
+  <div class="totals">
+    <div class="stat"><b>{{ playlists|length }}</b><span>Playlists</span></div>
+    <div class="stat"><b>{{ library_files }}</b><span>Library files</span></div>
+    <div class="stat owned"><b>{{ owned }}</b><span>Owned</span></div>
+    <div class="stat uncertain"><b>{{ uncertain }}</b><span>Uncertain</span></div>
+    <div class="stat missing"><b>{{ missing }}</b><span>Missing</span></div>
+  </div>
+</header>
+
+<nav class="toc">
+{% for pl in playlists %}
+  {% set total = pl.rows|length %}
+  <a href="#pl-{{ loop.index }}">
+    <strong>{{ pl.title }}</strong>
+    <div class="counts">{{ pl.owned }} owned · {{ pl.uncertain }} uncertain · {{ pl.missing }} missing</div>
+    {% if total > 0 %}
+    <div class="bar">
+      <i class="o" style="width: {{ pl.owned * 100 / total }}%"></i>
+      <i class="u" style="width: {{ pl.uncertain * 100 / total }}%"></i>
+      <i class="m" style="width: {{ pl.missing * 100 / total }}%"></i>
+    </div>
+    {% endif %}
+  </a>
+{% endfor %}
+</nav>
+
+{% for pl in playlists %}
+<section class="pl" id="pl-{{ loop.index }}">
+  <h2>{{ pl.title }}</h2>
+  <div class="meta">{{ pl.rows|length }} tracks · <a href="{{ pl.link }}" rel="noreferrer">Open on Deezer</a></div>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" data-tab="missing" aria-selected="true">Missing<span class="n">{{ pl.missing }}</span></button>
+    <button role="tab" data-tab="uncertain" aria-selected="false">Uncertain<span class="n">{{ pl.uncertain }}</span></button>
+    <button role="tab" data-tab="owned" aria-selected="false">Owned<span class="n">{{ pl.owned }}</span></button>
+  </div>
+
+  <div class="panel" data-panel="missing">
+  {% for al in pl.missing_albums %}
+    <div class="album">
+      <h3>{{ al.album or "Unknown album" }} <small>— {{ al.artist }}</small></h3>
+      <div class="links">
+        <span class="meta">Album:</span>
+        <a href="{{ al.links.bandcamp }}" target="_blank" rel="noreferrer">Bandcamp</a>
+        <a href="{{ al.links.qobuz }}" target="_blank" rel="noreferrer">Qobuz</a>
+        <a href="{{ al.links.beatport }}" target="_blank" rel="noreferrer">Beatport</a>
+      </div>
+      <ol>
+      {% for row in al.tracks %}
+        <li>
+          {{ row.track.title }}
+          <span class="meta">{{ row.track.duration|mmss }}{% if row.track.isrc %} · {{ row.track.isrc }}{% endif %}</span>
+          <span class="links">
+            <a href="{{ row.links.bandcamp }}" target="_blank" rel="noreferrer">Bandcamp</a>
+            <a href="{{ row.links.qobuz }}" target="_blank" rel="noreferrer">Qobuz</a>
+            <a href="{{ row.links.beatport }}" target="_blank" rel="noreferrer">Beatport</a>
+            <a href="{{ row.track.link }}" target="_blank" rel="noreferrer">Deezer</a>
+          </span>
+        </li>
+      {% endfor %}
+      </ol>
+    </div>
+  {% else %}
+    <p class="empty">Nothing missing.</p>
+  {% endfor %}
+  </div>
+
+  <div class="panel" data-panel="uncertain" hidden>
+  {% set rows = pl.rows|selectattr("status", "eq", "uncertain")|list %}
+  {% if rows %}
+    <p class="note">Possible matches that were not accepted automatically. Check them, fix the tags in MediaMonkey if needed, and re-run.</p>
+    <div class="scroll"><table>
+      <thead><tr><th>#</th><th>Deezer</th><th>Best local candidate</th><th class="hide-sm">Score</th><th>Buy</th></tr></thead>
+      <tbody>
+      {% for row in rows %}
+        {% set m = row.matched %}
+        <tr>
+          <td class="num">{{ row.position + 1 }}</td>
+          <td>{{ row.track.artist }} – {{ row.track.title }}<br><span class="meta">{{ row.track.duration|mmss }}</span></td>
+          <td>{{ m.file.artist or "?" }} – {{ m.file.title or "?" }}
+            <span class="meta">{{ m.file.duration_ms|ms_mmss }}</span>
+            <div class="path">{{ m.file.path }}</div></td>
+          <td class="hide-sm">
+            <span class="badge warn">{{ m.confidence|pct }}</span>
+            {% if m.scores %}<div class="meta">title {{ m.scores.title|pct }} · artist {{ m.scores.artist|pct }} · version {{ m.scores.version|pct }}{% if m.scores.duration_delta is not none %} · Δ{{ m.scores.duration_delta }}s{% endif %}</div>{% endif %}
+          </td>
+          <td><span class="links">
+            <a href="{{ row.links.bandcamp }}" target="_blank" rel="noreferrer">Bandcamp</a>
+            <a href="{{ row.links.qobuz }}" target="_blank" rel="noreferrer">Qobuz</a>
+            <a href="{{ row.links.beatport }}" target="_blank" rel="noreferrer">Beatport</a>
+          </span></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  {% else %}
+    <p class="empty">No uncertain matches.</p>
+  {% endif %}
+  </div>
+
+  <div class="panel" data-panel="owned" hidden>
+  {% set rows = pl.rows|selectattr("status", "eq", "owned")|list %}
+  {% if rows %}
+    <div class="scroll"><table>
+      <thead><tr><th>#</th><th>Track</th><th>File</th><th class="hide-sm">Match</th></tr></thead>
+      <tbody>
+      {% for row in rows %}
+        <tr>
+          <td class="num">{{ row.position + 1 }}</td>
+          <td>{{ row.track.artist }} – {{ row.track.title }}</td>
+          <td class="path">{{ row.matched.file.path }}</td>
+          <td class="hide-sm">{% if row.matched.method == "isrc" %}<span class="badge isrc">ISRC</span>{% else %}<span class="badge">{{ row.matched.confidence|pct }}</span>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  {% else %}
+    <p class="empty">No owned tracks yet.</p>
+  {% endif %}
+  </div>
+</section>
+{% endfor %}
+</div>
+<script>
+document.addEventListener("click", function (e) {
+  var btn = e.target.closest(".tabs button");
+  if (!btn) return;
+  var section = btn.closest("section");
+  section.querySelectorAll(".tabs button").forEach(function (b) {
+    b.setAttribute("aria-selected", b === btn ? "true" : "false");
+  });
+  section.querySelectorAll(".panel").forEach(function (p) {
+    p.hidden = p.dataset.panel !== btn.dataset.tab;
+  });
+});
+</script>
+</body>
+</html>
