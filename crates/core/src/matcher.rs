@@ -313,9 +313,17 @@ mod tests {
 
     #[test]
     fn isrc_match_wins_even_with_different_tags() {
-        let mut l = local("/m/a.flac", Some("Completely Different"), Some("Nobody"), 10);
+        let mut l = local(
+            "/m/a.flac",
+            Some("Completely Different"),
+            Some("Nobody"),
+            10,
+        );
         l.isrc = Some("xx-aaa-26-00001".into());
-        let r = run(&[l], &dz("Night Drive", "Vela Nine", 300, Some("XXAAA2600001")));
+        let r = run(
+            &[l],
+            &dz("Night Drive", "Vela Nine", 300, Some("XXAAA2600001")),
+        );
         assert_eq!(r.status, MatchStatus::Owned);
         assert_eq!(r.candidate.unwrap().method, MatchMethod::Isrc);
     }
@@ -330,14 +338,27 @@ mod tests {
 
     #[test]
     fn accents_feat_and_remaster_are_ignored() {
-        let l = local("/m/a.mp3", Some("Café Nuit (feat. Ana Luz)"), Some("Élan Vital"), 245);
-        let r = run(&[l], &dz("Cafe Nuit (Remastered 2015)", "Elan Vital", 244, None));
+        let l = local(
+            "/m/a.mp3",
+            Some("Café Nuit (feat. Ana Luz)"),
+            Some("Élan Vital"),
+            245,
+        );
+        let r = run(
+            &[l],
+            &dz("Cafe Nuit (Remastered 2015)", "Elan Vital", 244, None),
+        );
         assert_eq!(r.status, MatchStatus::Owned);
     }
 
     #[test]
     fn remix_vs_original_is_uncertain_not_owned() {
-        let l = local("/m/a.mp3", Some("Low Tide (Kora Blue Remix)"), Some("Vela Nine"), 300);
+        let l = local(
+            "/m/a.mp3",
+            Some("Low Tide (Kora Blue Remix)"),
+            Some("Vela Nine"),
+            300,
+        );
         let r = run(&[l], &dz("Low Tide", "Vela Nine", 300, None));
         assert_eq!(r.status, MatchStatus::Uncertain);
     }
@@ -353,7 +374,12 @@ mod tests {
 
     #[test]
     fn different_artist_is_missing() {
-        let l = local("/m/a.mp3", Some("Night Drive"), Some("Completely Other Band"), 300);
+        let l = local(
+            "/m/a.mp3",
+            Some("Night Drive"),
+            Some("Completely Other Band"),
+            300,
+        );
         let r = run(&[l], &dz("Night Drive", "Vela Nine", 300, None));
         assert_eq!(r.status, MatchStatus::Missing);
         assert!(r.candidate.is_none());
@@ -369,7 +395,12 @@ mod tests {
 
     #[test]
     fn collaboration_credit_matches_primary_artist() {
-        let l = local("/m/a.mp3", Some("Glass Rooms"), Some("Mira Sol & Vela Nine"), 200);
+        let l = local(
+            "/m/a.mp3",
+            Some("Glass Rooms"),
+            Some("Mira Sol & Vela Nine"),
+            200,
+        );
         let r = run(&[l], &dz("Glass Rooms", "Vela Nine", 200, None));
         assert_eq!(r.status, MatchStatus::Owned);
     }
@@ -377,7 +408,12 @@ mod tests {
     #[test]
     fn picks_best_of_several_candidates() {
         let locals = [
-            local("/m/1.mp3", Some("Night Drive (Radio Edit)"), Some("Vela Nine"), 210),
+            local(
+                "/m/1.mp3",
+                Some("Night Drive (Radio Edit)"),
+                Some("Vela Nine"),
+                210,
+            ),
             local("/m/2.mp3", Some("Night Drive"), Some("Vela Nine"), 300),
             local("/m/3.mp3", Some("Night Moves"), Some("Vela Nine"), 300),
         ];

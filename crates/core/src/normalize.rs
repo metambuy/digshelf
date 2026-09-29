@@ -274,7 +274,10 @@ mod tests {
 
     #[test]
     fn isrc_normalisation() {
-        assert_eq!(normalize_isrc("gb-abc-12-00001").as_deref(), Some("GBABC1200001"));
+        assert_eq!(
+            normalize_isrc("gb-abc-12-00001").as_deref(),
+            Some("GBABC1200001")
+        );
         assert_eq!(normalize_isrc("short"), None);
     }
 }

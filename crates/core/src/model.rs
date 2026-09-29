@@ -5,7 +5,8 @@ use serde::Serialize;
 /// A track as described by the public Deezer API.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct DeezerTrack {
-    pub id: u64,
+    /// Negative for tracks a user uploaded themselves (not purchasable).
+    pub id: i64,
     pub title: String,
     pub artist: String,
     pub album_id: Option<u64>,
@@ -92,4 +93,29 @@ pub struct Candidate {
 pub struct MatchResult {
     pub status: MatchStatus,
     pub candidate: Option<Candidate>,
+}
+
+/// Progress events for long operations, so front ends can report status.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Progress {
+    FetchingPlaylist {
+        id: u64,
+    },
+    FetchedPlaylist {
+        title: String,
+        tracks: usize,
+    },
+    FetchingIsrc {
+        done: usize,
+        total: usize,
+    },
+    ScanningLibrary {
+        files_seen: usize,
+    },
+    ScannedLibrary {
+        files: usize,
+        read: usize,
+        cached: usize,
+        failed: usize,
+    },
 }
