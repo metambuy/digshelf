@@ -8,7 +8,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-use lofty::config::ParseOptions;
+use lofty::config::{ParseOptions, ParsingMode};
+use lofty::file::TaggedFile;
 use lofty::prelude::*;
 use lofty::probe::Probe;
 use walkdir::WalkDir;
@@ -45,13 +46,23 @@ fn non_empty(s: Option<std::borrow::Cow<'_, str>>) -> Option<String> {
     s.map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
 }
 
-/// Read tags and duration from one file, without modifying it.
-pub fn read_file(path: &Path) -> std::result::Result<LocalTrack, String> {
-    let tagged = Probe::open(path)
+fn probe(path: &Path, read_properties: bool) -> std::result::Result<TaggedFile, String> {
+    Probe::open(path)
         .map_err(|e| e.to_string())?
-        .options(ParseOptions::new().read_cover_art(false))
+        .options(
+            ParseOptions::new()
+                .read_cover_art(false)
+                .read_properties(read_properties)
+                .parsing_mode(ParsingMode::Relaxed),
+        )
         .read()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())
+}
+
+/// Read tags and duration from one file, without modifying it. If the audio
+/// stream cannot be parsed, fall back to tags only (no duration).
+pub fn read_file(path: &Path) -> std::result::Result<LocalTrack, String> {
+    let tagged = probe(path, true).or_else(|e| probe(path, false).map_err(|_| e))?;
     let duration = tagged.properties().duration();
     let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
     Ok(LocalTrack {
