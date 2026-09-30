@@ -27,7 +27,9 @@ These are non-negotiable. If a feature request conflicts with one, stop and ask.
   database. Output goes only to the `--out` directory and the digshelf cache.
 - **This is a public repo.** No personal paths, library contents, user IDs or
   real playlist data in commits. Test fixtures are synthetic (fictional artists,
-  made-up IDs) or trimmed public catalogue responses.
+  made-up IDs) or trimmed public catalogue responses. Output of runs against a
+  real library (e.g. the accuracy example) goes to `out/` (gitignored) only.
+  Never derive test strings from the user's library.
 
 ## Conventions
 
@@ -43,15 +45,17 @@ These are non-negotiable. If a feature request conflicts with one, stop and ask.
 ## Layout
 
 ```
-crates/core   digshelf-core: Deezer client, cache, library scan, matcher, exporters
-crates/cli    digshelf binary (clap)
+crates/core   digshelf-core: Deezer client, cache, library scan, matcher,
+              overrides (user decisions), report model, exporters
+crates/cli    digshelf binary (clap); examples/accuracy.rs for local accuracy checks
 src-tauri/    (M2, not yet created) GUI that reuses digshelf-core
 ```
 
 ## Roadmap
 
 - **M1 — CLI (current):** read Deezer playlists/favourites, scan the library,
-  match, and write `report.html`, `missing.csv` and one `.m3u8` per playlist.
+  match, and write `index.html` + `playlists/*.html`, `missing.csv` and one
+  `.m3u8` per playlist. User decisions come from `overrides.toml` in the config dir.
 - **M2 — Tauri GUI:** `src-tauri/` app on top of `digshelf-core`; review and
   accept/reject uncertain matches.
 - **M3 — Post-purchase pipeline:** watch the Downloads folder, unzip and verify
