@@ -57,10 +57,28 @@ struct Prepared {
 
 impl Prepared {
     fn new(title: &str, artist: &str, isrc: Option<&str>, duration: Option<u32>) -> Self {
+        Self::with_credits(title, artist, &[], isrc, duration)
+    }
+
+    /// `credits` are extra artist names (Deezer contributors) that count as
+    /// artists of this track for name-overlap matching.
+    fn with_credits(
+        title: &str,
+        artist: &str,
+        credits: &[String],
+        isrc: Option<&str>,
+        duration: Option<u32>,
+    ) -> Self {
+        let mut artists = split_artists(artist);
+        for name in credits.iter().flat_map(|c| split_artists(c)) {
+            if !artists.contains(&name) {
+                artists.push(name);
+            }
+        }
         Self {
             title: split_title(title),
             alt_title: None,
-            artists: split_artists(artist),
+            artists,
             artist_full: normalize(artist),
             isrc: isrc.and_then(normalize_isrc),
             duration,
@@ -144,9 +162,10 @@ impl Matcher {
     }
 
     pub fn match_track(&self, track: &DeezerTrack) -> MatchResult {
-        let dz = Prepared::new(
+        let dz = Prepared::with_credits(
             &track.title,
             &track.artist,
+            &track.contributors,
             track.isrc.as_deref(),
             track.duration,
         );
@@ -317,6 +336,7 @@ mod tests {
             duration: Some(duration),
             isrc: isrc.map(Into::into),
             link: String::new(),
+            contributors: Vec::new(),
         }
     }
 
@@ -480,6 +500,19 @@ mod tests {
         );
         let r = run(&[l], &dz("Tout va bien ce soir", "Ána Luz", 140, None));
         assert_eq!(r.status, MatchStatus::Owned);
+    }
+
+    #[test]
+    fn contributor_credit_matches_file_tagged_with_other_artist() {
+        // Duet: Deezer lists one main artist, the file is tagged with the other.
+        let l = local("/m/a.mp3", Some("Blue Meadows"), Some("Tessa Crane"), 200);
+        let mut t = dz("Blue Meadows", "Mira Sol", 200, None);
+        assert_eq!(
+            run(std::slice::from_ref(&l), &t).status,
+            MatchStatus::Missing
+        );
+        t.contributors = vec!["Tessa Crane".into()];
+        assert_eq!(run(&[l], &t).status, MatchStatus::Owned);
     }
 
     #[test]

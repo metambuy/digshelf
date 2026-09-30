@@ -15,6 +15,9 @@ pub struct DeezerTrack {
     pub duration: Option<u32>,
     pub isrc: Option<String>,
     pub link: String,
+    /// Other credited artists (featured, co-main), from `/track/{id}` when
+    /// available. Excludes `artist`.
+    pub contributors: Vec<String>,
 }
 
 /// Where a playlist came from.

@@ -102,12 +102,27 @@ struct TrackJson {
     link: Option<String>,
     artist: Option<ArtistJson>,
     album: Option<AlbumJson>,
+    /// Only present on `/track/{id}`, not on list endpoints.
+    #[serde(default)]
+    contributors: Vec<ArtistJson>,
 }
 
 impl From<TrackJson> for DeezerTrack {
     fn from(t: TrackJson) -> Self {
+        let main = t.artist.as_ref().map(|a| a.name.to_lowercase());
+        let mut contributors: Vec<String> = Vec::new();
+        for c in t.contributors {
+            let lower = c.name.to_lowercase();
+            if !c.name.is_empty()
+                && Some(&lower) != main.as_ref()
+                && !contributors.iter().any(|x| x.to_lowercase() == lower)
+            {
+                contributors.push(c.name);
+            }
+        }
         DeezerTrack {
             id: t.id,
+            contributors,
             link: t
                 .link
                 .unwrap_or_else(|| format!("https://www.deezer.com/track/{}", t.id)),
@@ -391,7 +406,7 @@ impl<'c, T: Transport> DeezerClient<'c, T> {
             }
         }
 
-        self.fill_missing_isrc(
+        self.enrich_tracks(
             playlists.iter_mut().flat_map(|p| p.tracks.iter_mut()),
             progress,
         )
@@ -399,27 +414,34 @@ impl<'c, T: Transport> DeezerClient<'c, T> {
         Ok(playlists)
     }
 
-    /// Fill in ISRCs (and durations) from `/track/{id}` for tracks that lack
-    /// them. Individual lookup failures are skipped, not fatal.
-    pub async fn fill_missing_isrc<'t>(
+    /// Enrich tracks with data from `/track/{id}`: ISRC, duration and
+    /// contributor credits. Only tracks **missing an ISRC** are requested
+    /// (network or cache); for all others an already-cached `/track/{id}`
+    /// response is used if present, at no request cost. Individual lookup
+    /// failures are skipped, not fatal.
+    pub async fn enrich_tracks<'t>(
         &self,
         tracks: impl IntoIterator<Item = &'t mut DeezerTrack>,
         progress: &dyn Fn(Progress),
     ) -> Result<()> {
-        let mut todo: Vec<&mut DeezerTrack> = tracks
-            .into_iter()
-            .filter(|t| t.isrc.is_none() && t.id > 0)
-            .collect();
+        let mut todo: Vec<&mut DeezerTrack> = Vec::new();
+        for track in tracks.into_iter().filter(|t| t.id > 0) {
+            if track.isrc.is_none() {
+                todo.push(track);
+            } else if let Some(body) = self.cache.http_get(&self.track_url(track.id), None)? {
+                if let Ok(full) = serde_json::from_str::<TrackJson>(&body) {
+                    apply_details(track, full.into());
+                }
+            }
+        }
         let total = todo.len();
         for (done, track) in todo.iter_mut().enumerate() {
             progress(Progress::FetchingIsrc { done, total });
-            let url = format!("{}/track/{}", self.base, track.id);
-            match self.get::<TrackJson>(&url, Freshness::Forever).await {
-                Ok(full) => {
-                    let full = DeezerTrack::from(full);
-                    track.isrc = full.isrc;
-                    track.duration = track.duration.or(full.duration);
-                }
+            match self
+                .get::<TrackJson>(&self.track_url(track.id), Freshness::Forever)
+                .await
+            {
+                Ok(full) => apply_details(track, full.into()),
                 Err(Error::RateLimited { .. }) => {
                     return Err(Error::RateLimited {
                         attempts: self.max_attempts,
@@ -432,6 +454,18 @@ impl<'c, T: Transport> DeezerClient<'c, T> {
             progress(Progress::FetchingIsrc { done: total, total });
         }
         Ok(())
+    }
+
+    fn track_url(&self, id: i64) -> String {
+        format!("{}/track/{id}", self.base)
+    }
+}
+
+fn apply_details(track: &mut DeezerTrack, full: DeezerTrack) {
+    track.isrc = track.isrc.take().or(full.isrc);
+    track.duration = track.duration.or(full.duration);
+    if track.contributors.is_empty() {
+        track.contributors = full.contributors;
     }
 }
 

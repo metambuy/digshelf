@@ -166,13 +166,18 @@ async fn main() -> Result<()> {
 
     std::fs::create_dir_all(&args.out)?;
     let mut counts = String::new();
+    let with_credits = unique
+        .iter()
+        .filter(|r| !r.track.contributors.is_empty())
+        .count();
     writeln!(
         counts,
-        "playlists: {}\nlibrary files: {} ({} unreadable)\nunique Deezer tracks: {}\nplaylist rows: {}\n",
+        "playlists: {}\nlibrary files: {} ({} unreadable)\nunique Deezer tracks: {} ({} with contributor credits)\nplaylist rows: {}\n",
         report.playlists.len(),
         scan.tracks.len(),
         scan.unreadable.len(),
         unique.len(),
+        with_credits,
         report.playlists.iter().map(|p| p.rows.len()).sum::<usize>()
     )?;
     writeln!(

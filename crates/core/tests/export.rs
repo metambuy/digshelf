@@ -25,6 +25,7 @@ fn dz(
         duration: Some(dur),
         isrc: isrc.map(Into::into),
         link: format!("https://www.deezer.com/track/{id}"),
+        contributors: Vec::new(),
     }
 }
 

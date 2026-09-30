@@ -152,7 +152,7 @@ async fn missing_playlist_is_an_api_error_and_not_cached() {
 }
 
 #[tokio::test]
-async fn favourites_fill_missing_isrc_and_skip_uploads() {
+async fn favourites_are_enriched_and_uploads_skipped() {
     let stub = Stub::default()
         .route(
             "https://api.deezer.com/user/77/tracks?index=0&limit=100",
@@ -167,10 +167,12 @@ async fn favourites_fill_missing_isrc_and_skip_uploads() {
     assert!(fav.tracks.iter().all(|t| t.isrc.is_none()));
 
     client
-        .fill_missing_isrc(fav.tracks.iter_mut(), &|_| {})
+        .enrich_tracks(fav.tracks.iter_mut(), &|_| {})
         .await
         .unwrap();
     assert_eq!(fav.tracks[0].isrc.as_deref(), Some("XXCCC2600004"));
+    // Contributors exclude the main artist.
+    assert_eq!(fav.tracks[0].contributors, ["Tessa Crane", "Vela Nine"]);
     // Negative IDs are user uploads: never looked up.
     assert_eq!(fav.tracks[1].isrc, None);
     assert_eq!(stub.calls.borrow().len(), 2);
@@ -244,4 +246,28 @@ async fn fetch_all_skips_unavailable_user_playlists() {
         err.to_string().starts_with("cannot fetch playlist 1001"),
         "{err}"
     );
+}
+
+#[tokio::test]
+async fn cached_track_details_add_credits_without_requests() {
+    let stub = playlist_stub();
+    let cache = Cache::open_in_memory().unwrap();
+    let client = DeezerClient::new(&stub, &cache);
+    let mut pl = client.playlist(1001, &|_| {}).await.unwrap();
+    // Seed the cache as a previous run's /track/501 lookup would have.
+    cache
+        .http_put(
+            "https://api.deezer.com/track/501",
+            &fixture("track_501.json"),
+        )
+        .unwrap();
+    let before = stub.calls.borrow().len();
+    client
+        .enrich_tracks(pl.tracks.iter_mut(), &|_| {})
+        .await
+        .unwrap();
+    // Every playlist track already has an ISRC: no network requests at all.
+    assert_eq!(stub.calls.borrow().len(), before);
+    assert_eq!(pl.tracks[0].contributors, ["Élan Vital"]);
+    assert!(pl.tracks[1].contributors.is_empty());
 }
