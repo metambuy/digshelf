@@ -12,7 +12,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use crate::error::{Error, Result};
 use crate::model::LocalTrack;
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS http_cache (
@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS library_file (
     album       TEXT,
     duration_ms INTEGER,
     isrc        TEXT,
+    read_error  TEXT,
     scanned_at  INTEGER NOT NULL
 );
 ";
@@ -39,6 +40,8 @@ pub struct CachedFile {
     pub track: LocalTrack,
     pub mtime: i64,
     pub size: i64,
+    /// Why the tags could not be read, if they could not.
+    pub read_error: Option<String>,
 }
 
 pub struct Cache {
@@ -66,11 +69,15 @@ impl Cache {
 
     fn init(conn: Connection) -> Result<Self> {
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if version != SCHEMA_VERSION {
-            // Only a cache: on any schema change, start over.
-            conn.execute_batch(
+        match version {
+            SCHEMA_VERSION => {}
+            // v2 added library_file.read_error: rescan the library once but
+            // keep the (slow to rebuild) Deezer response cache.
+            1 => conn.execute_batch("DROP TABLE IF EXISTS library_file;")?,
+            // Only a cache: on any other schema change, start over.
+            _ => conn.execute_batch(
                 "DROP TABLE IF EXISTS http_cache; DROP TABLE IF EXISTS library_file;",
-            )?;
+            )?,
         }
         conn.execute_batch(SCHEMA)?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -105,13 +112,15 @@ impl Cache {
     /// All cached library rows, keyed by path.
     pub fn library_files(&self) -> Result<HashMap<PathBuf, CachedFile>> {
         let mut stmt = self.conn.prepare(
-            "SELECT path, mtime, size, title, artist, album, duration_ms, isrc FROM library_file",
+            "SELECT path, mtime, size, title, artist, album, duration_ms, isrc, read_error
+             FROM library_file",
         )?;
         let rows = stmt.query_map([], |r| {
             let path = PathBuf::from(r.get::<_, String>(0)?);
             Ok(CachedFile {
                 mtime: r.get(1)?,
                 size: r.get(2)?,
+                read_error: r.get(8)?,
                 track: LocalTrack {
                     path,
                     title: r.get(3)?,
@@ -143,8 +152,9 @@ impl Cache {
             )?;
             let mut stmt = tx.prepare(
                 "INSERT OR REPLACE INTO library_file
-                 (path, mtime, size, title, artist, album, duration_ms, isrc, scanned_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                 (path, mtime, size, title, artist, album, duration_ms, isrc, read_error,
+                  scanned_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             )?;
             for f in files {
                 let t = &f.track;
@@ -157,6 +167,7 @@ impl Cache {
                     t.album,
                     t.duration_ms.map(|v| v as i64),
                     t.isrc,
+                    f.read_error,
                     now
                 ])?;
             }
@@ -203,6 +214,25 @@ mod tests {
     }
 
     #[test]
+    fn v1_migration_keeps_http_cache() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE http_cache (url TEXT PRIMARY KEY, body TEXT NOT NULL,
+                                      fetched_at INTEGER NOT NULL);
+             INSERT INTO http_cache VALUES ('u', 'b', 0);
+             CREATE TABLE library_file (path TEXT PRIMARY KEY, mtime INTEGER NOT NULL,
+                 size INTEGER NOT NULL, title TEXT, artist TEXT, album TEXT,
+                 duration_ms INTEGER, isrc TEXT, scanned_at INTEGER NOT NULL);
+             INSERT INTO library_file VALUES ('/a/1.mp3', 1, 2, 't', NULL, NULL, NULL, NULL, 0);
+             PRAGMA user_version = 1;",
+        )
+        .unwrap();
+        let c = Cache::init(conn).unwrap();
+        assert_eq!(c.http_get("u", None).unwrap().as_deref(), Some("b"));
+        assert!(c.library_files().unwrap().is_empty(), "library rescanned");
+    }
+
+    #[test]
     fn replace_library_only_touches_root() {
         let mut c = Cache::open_in_memory().unwrap();
         let file = |p: &str| CachedFile {
@@ -216,6 +246,7 @@ mod tests {
             },
             mtime: 1,
             size: 2,
+            read_error: None,
         };
         c.replace_library(Path::new("/a"), &[file("/a/1.mp3"), file("/a/2.mp3")])
             .unwrap();

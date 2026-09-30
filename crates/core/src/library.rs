@@ -132,29 +132,36 @@ pub fn scan(root: &Path, cache: &mut Cache, progress: &dyn Fn(Progress)) -> Resu
             _ => todo.push(f),
         }
     }
+    let mut result = ScanResult::default();
+    for c in &rows {
+        if let Some(e) = &c.read_error {
+            result.unreadable.push((c.track.path.clone(), e.clone()));
+        }
+    }
     let cached_count = rows.len();
 
     let read = read_parallel(&todo);
-    let mut result = ScanResult::default();
     for (f, outcome) in todo.into_iter().zip(read) {
-        let track = match outcome {
-            Ok(t) => t,
+        let (track, read_error) = match outcome {
+            Ok(t) => (t, None),
             Err(e) => {
-                result.unreadable.push((f.path.clone(), e));
-                LocalTrack {
+                result.unreadable.push((f.path.clone(), e.clone()));
+                let t = LocalTrack {
                     path: f.path.clone(),
                     title: None,
                     artist: None,
                     album: None,
                     duration_ms: None,
                     isrc: None,
-                }
+                };
+                (t, Some(e))
             }
         };
         rows.push(CachedFile {
             track,
             mtime: f.mtime,
             size: f.size,
+            read_error,
         });
     }
 
@@ -167,6 +174,7 @@ pub fn scan(root: &Path, cache: &mut Cache, progress: &dyn Fn(Progress)) -> Resu
     });
 
     rows.sort_by(|a, b| a.track.path.cmp(&b.track.path));
+    result.unreadable.sort();
     result.tracks = rows.into_iter().map(|r| r.track).collect();
     Ok(result)
 }

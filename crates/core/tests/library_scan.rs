@@ -86,8 +86,10 @@ fn scans_tags_duration_and_uses_cache() {
         files: 3,
         read: 0,
         cached: 3,
-        failed: 0
+        failed: 1
     }));
+    // Unreadable files are still reported when served from the cache.
+    assert_eq!(res2.unreadable, res.unreadable);
 
     // Deleted files disappear from results and cache.
     fs::remove_file(&b).unwrap();
