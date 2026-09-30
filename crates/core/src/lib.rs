@@ -12,6 +12,7 @@ pub mod library;
 pub mod matcher;
 pub mod model;
 pub mod normalize;
+pub mod overrides;
 pub mod report;
 pub mod stores;
 

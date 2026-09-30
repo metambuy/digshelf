@@ -64,6 +64,11 @@ td.num { color: var(--muted); font-variant-numeric: tabular-nums; width: 1%; }
 .badge.warn { color: var(--uncertain); }
 .empty { color: var(--muted); font-style: italic; padding: 8px 0; }
 .scroll { overflow-x: auto; }
+tr.snip td { border-top: 0; padding-top: 0; }
+details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.snips { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px; margin-top: 6px; }
+.snips b { font-size: 12px; }
+.snips pre { margin: 4px 0 0; padding: 8px; background: var(--chip); border-radius: 6px; font-size: 11px; white-space: pre-wrap; word-break: break-all; user-select: all; }
 @media (max-width: 640px) { .hide-sm { display: none; } }
 </style>
 </head>
@@ -123,7 +128,7 @@ td.num { color: var(--muted); font-variant-numeric: tabular-nums; width: 1%; }
       {% for row in al.tracks %}
         <li>
           {{ row.track.title }}
-          <span class="meta">{{ row.track.duration|mmss }}{% if row.track.isrc %} · {{ row.track.isrc }}{% endif %}</span>
+          <span class="meta">{{ row.track.duration|mmss }}{% if row.track.isrc %} · {{ row.track.isrc }}{% endif %}{% if row.rejected_by_user %} · marked not owned in overrides{% endif %}</span>
           <span class="links">
             <a href="{{ row.links.bandcamp }}" target="_blank" rel="noreferrer">Bandcamp</a>
             <a href="{{ row.links.qobuz }}" target="_blank" rel="noreferrer">Qobuz</a>
@@ -164,6 +169,17 @@ td.num { color: var(--muted); font-variant-numeric: tabular-nums; width: 1%; }
             <a href="{{ row.links.beatport }}" target="_blank" rel="noreferrer">Beatport</a>
           </span></td>
         </tr>
+        {% if row.snippets %}
+        <tr class="snip"><td></td><td colspan="4">
+          <details><summary>Decide: paste into your overrides file</summary>
+            <div class="snips">
+              <div><b>Same track</b><pre>{{ row.snippets.accept }}</pre></div>
+              <div><b>Wrong file</b><pre>{{ row.snippets.reject_file }}</pre></div>
+              <div><b>Not owned</b><pre>{{ row.snippets.reject_track }}</pre></div>
+            </div>
+          </details>
+        </td></tr>
+        {% endif %}
       {% endfor %}
       </tbody>
     </table></div>
@@ -183,7 +199,7 @@ td.num { color: var(--muted); font-variant-numeric: tabular-nums; width: 1%; }
           <td class="num">{{ row.position + 1 }}</td>
           <td>{{ row.track.artist }} – {{ row.track.title }}</td>
           <td class="path">{{ row.matched.file.path }}</td>
-          <td class="hide-sm">{% if row.matched.method == "isrc" %}<span class="badge isrc">ISRC</span>{% else %}<span class="badge">{{ row.matched.confidence|pct }}</span>{% endif %}</td>
+          <td class="hide-sm">{% if row.matched.method == "isrc" %}<span class="badge isrc">ISRC</span>{% elif row.matched.method == "manual" %}<span class="badge isrc">Manual</span>{% else %}<span class="badge">{{ row.matched.confidence|pct }}</span>{% endif %}</td>
         </tr>
       {% endfor %}
       </tbody>

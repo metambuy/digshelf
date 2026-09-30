@@ -2,6 +2,7 @@
 //! normalised artist + title + version + duration. See docs/DESIGN.md.
 
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 use strsim::normalized_levenshtein as similarity;
 
@@ -9,6 +10,7 @@ use crate::model::{
     Candidate, DeezerTrack, LocalTrack, MatchMethod, MatchResult, MatchStatus, ScoreBreakdown,
 };
 use crate::normalize::{normalize, normalize_isrc, split_artists, split_title, TitleParts};
+use crate::overrides::TrackOverride;
 
 /// Thresholds and tolerances for match decisions.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -133,6 +135,7 @@ pub struct Matcher {
     prepared: Vec<Prepared>,
     by_isrc: HashMap<String, Vec<usize>>,
     by_token: HashMap<String, Vec<usize>>,
+    by_path: HashMap<PathBuf, usize>,
 }
 
 impl Matcher {
@@ -153,15 +156,56 @@ impl Matcher {
                 by_token.entry(tok.to_string()).or_default().push(i);
             }
         }
+        let by_path = locals
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (t.path.clone(), i))
+            .collect();
         Self {
             config,
             prepared,
             by_isrc,
             by_token,
+            by_path,
         }
     }
 
+    /// Index of a scanned file, if it is in the library.
+    pub fn index_of(&self, path: &Path) -> Option<usize> {
+        self.by_path.get(path).copied()
+    }
+
     pub fn match_track(&self, track: &DeezerTrack) -> MatchResult {
+        self.match_track_with(track, &TrackOverride::default())
+    }
+
+    /// Match with the user's overrides for this track applied: a forced file
+    /// (accept/map) wins if it is still in the library; `reject_all` gives
+    /// Missing; rejected files are never candidates.
+    pub fn match_track_with(&self, track: &DeezerTrack, ov: &TrackOverride) -> MatchResult {
+        if let Some(local_index) = ov.forced.and_then(|(f, _)| self.index_of(f)) {
+            return MatchResult {
+                status: MatchStatus::Owned,
+                candidate: Some(Candidate {
+                    local_index,
+                    method: MatchMethod::Manual,
+                    confidence: 1.0,
+                    scores: None,
+                }),
+            };
+        }
+        if ov.reject_all {
+            return MatchResult {
+                status: MatchStatus::Missing,
+                candidate: None,
+            };
+        }
+        let rejected: HashSet<usize> = ov
+            .rejected_files
+            .iter()
+            .filter_map(|f| self.index_of(f))
+            .collect();
+
         let dz = Prepared::with_credits(
             &track.title,
             &track.artist,
@@ -171,7 +215,11 @@ impl Matcher {
         );
 
         if let Some(isrc) = &dz.isrc {
-            if let Some(&local_index) = self.by_isrc.get(isrc).and_then(|v| v.first()) {
+            let hit = self
+                .by_isrc
+                .get(isrc)
+                .and_then(|v| v.iter().find(|i| !rejected.contains(i)));
+            if let Some(&local_index) = hit {
                 return MatchResult {
                     status: MatchStatus::Owned,
                     candidate: Some(Candidate {
@@ -187,6 +235,7 @@ impl Matcher {
         let best = self
             .candidates(&dz)
             .into_iter()
+            .filter(|i| !rejected.contains(i))
             .filter_map(|i| {
                 let local = &self.prepared[i];
                 local
@@ -195,7 +244,13 @@ impl Matcher {
                     .max_by(|a, b| a.0.total_cmp(&b.0))
                     .map(|s| (i, s))
             })
-            .max_by(|a, b| a.1 .0.total_cmp(&b.1 .0));
+            // Ties: smaller duration difference, then earliest (sorted) path.
+            .max_by(|(ia, (ca, sa)), (ib, (cb, sb))| {
+                let delta = |s: &ScoreBreakdown| s.duration_delta.unwrap_or(u32::MAX);
+                ca.total_cmp(cb)
+                    .then_with(|| delta(sb).cmp(&delta(sa)))
+                    .then_with(|| ib.cmp(ia))
+            });
 
         let Some((local_index, (confidence, scores))) = best else {
             return MatchResult {
@@ -324,7 +379,7 @@ fn version_score(a: &str, b: &str) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    use crate::overrides::{Overrides, TrackInfo};
 
     fn dz(title: &str, artist: &str, duration: u32, isrc: Option<&str>) -> DeezerTrack {
         DeezerTrack {
@@ -513,6 +568,59 @@ mod tests {
         );
         t.contributors = vec!["Tessa Crane".into()];
         assert_eq!(run(&[l], &t).status, MatchStatus::Owned);
+    }
+
+    #[test]
+    fn overrides_force_reject_and_exclude() {
+        let locals = [
+            local("/m/1.mp3", Some("Night Drive"), Some("Vela Nine"), 300),
+            local("/m/2.mp3", Some("Night Drive"), Some("Vela Nine"), 301),
+            local("/m/3.mp3", Some("Unrelated"), Some("Somebody"), 10),
+        ];
+        let m = Matcher::new(&locals, MatchConfig::default());
+        let t = dz("Night Drive", "Vela Nine", 300, None);
+        let mut o = Overrides::default();
+
+        // Map to a file the matcher would never pick.
+        o.map(1, "/m/3.mp3".into(), TrackInfo::default());
+        let r = m.match_track_with(&t, &o.for_track(1));
+        assert_eq!(r.status, MatchStatus::Owned);
+        let c = r.candidate.unwrap();
+        assert_eq!((c.local_index, c.method), (2, MatchMethod::Manual));
+
+        // A stale forced file falls back to automatic matching.
+        o.map(1, "/m/moved.mp3".into(), TrackInfo::default());
+        assert_eq!(
+            m.match_track_with(&t, &o.for_track(1))
+                .candidate
+                .unwrap()
+                .local_index,
+            0
+        );
+
+        // Rejecting the best file lets the next candidate win.
+        o.reject(1, Some("/m/1.mp3".into()), TrackInfo::default());
+        let r = m.match_track_with(&t, &o.for_track(1));
+        assert_eq!(r.candidate.unwrap().local_index, 1);
+
+        // Reject without a file: not owned at all.
+        o.reject(1, None, TrackInfo::default());
+        let r = m.match_track_with(&t, &o.for_track(1));
+        assert_eq!((r.status, r.candidate), (MatchStatus::Missing, None));
+    }
+
+    #[test]
+    fn rejected_isrc_file_is_skipped() {
+        let mut a = local("/m/a.flac", Some("Night Drive"), Some("Vela Nine"), 300);
+        a.isrc = Some("XXAAA2600001".into());
+        let m = Matcher::new(&[a], MatchConfig::default());
+        let t = dz("Night Drive", "Vela Nine", 300, Some("XXAAA2600001"));
+        let mut o = Overrides::default();
+        o.reject(1, Some("/m/a.flac".into()), TrackInfo::default());
+        assert_eq!(
+            m.match_track_with(&t, &o.for_track(1)).status,
+            MatchStatus::Missing
+        );
     }
 
     #[test]

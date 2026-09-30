@@ -68,6 +68,8 @@ pub enum MatchStatus {
 pub enum MatchMethod {
     Isrc,
     Fuzzy,
+    /// Accepted or mapped by the user in the overrides file.
+    Manual,
 }
 
 /// Per-component similarity scores, kept so a human can see why a match was

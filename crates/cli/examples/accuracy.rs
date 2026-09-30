@@ -19,6 +19,7 @@ use digshelf_core::http::ReqwestTransport;
 use digshelf_core::library;
 use digshelf_core::matcher::{MatchConfig, W_DURATION};
 use digshelf_core::model::{MatchMethod, MatchStatus};
+use digshelf_core::overrides::Overrides;
 use digshelf_core::report::{build_report, ReportOptions, TrackRow};
 
 #[derive(Parser)]
@@ -65,6 +66,7 @@ impl Rng {
 fn kind(row: &TrackRow) -> &'static str {
     match (row.status, row.matched.as_ref().map(|m| m.method)) {
         (MatchStatus::Owned, Some(MatchMethod::Isrc)) => "owned_isrc",
+        (MatchStatus::Owned, Some(MatchMethod::Manual)) => "owned_manual",
         (MatchStatus::Owned, _) => "owned_fuzzy",
         (MatchStatus::Uncertain, _) => "uncertain",
         (MatchStatus::Missing, _) => "missing",
@@ -148,6 +150,8 @@ async fn main() -> Result<()> {
         &ReportOptions {
             match_config: config,
             qobuz_locale: "us-en",
+            // Measure the matcher itself, without user decisions.
+            overrides: &Overrides::default(),
         },
     );
 

@@ -43,6 +43,9 @@ pub enum Error {
         source: std::io::Error,
     },
 
+    #[error("invalid overrides file {path}: {message}")]
+    Overrides { path: PathBuf, message: String },
+
     #[error("template error: {0}")]
     Template(#[from] minijinja::Error),
 

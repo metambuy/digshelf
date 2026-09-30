@@ -13,6 +13,7 @@ use digshelf_core::http::ReqwestTransport;
 use digshelf_core::library;
 use digshelf_core::matcher::MatchConfig;
 use digshelf_core::model::Progress;
+use digshelf_core::overrides::Overrides;
 use digshelf_core::report::{build_report, ReportOptions};
 use digshelf_core::stores::DEFAULT_QOBUZ_LOCALE;
 
@@ -72,6 +73,11 @@ struct ScanArgs {
     #[arg(long)]
     refresh: bool,
 
+    /// Overrides file with your accept/reject/map decisions
+    /// [default: config `overrides_file`, else <config dir>/digshelf/overrides.toml]
+    #[arg(long, value_name = "FILE")]
+    overrides: Option<PathBuf>,
+
     /// Qobuz storefront for links, e.g. gb-en, fr-fr [default: config, else us-en]
     #[arg(long, value_name = "LOCALE")]
     qobuz_locale: Option<String>,
@@ -87,6 +93,7 @@ struct Config {
     #[serde(default)]
     playlists: Vec<String>,
     qobuz_locale: Option<String>,
+    overrides_file: Option<String>,
 }
 
 fn expand_tilde(p: &str) -> PathBuf {
@@ -182,6 +189,18 @@ async fn scan(cli: &Cli, args: &ScanArgs) -> Result<()> {
         args.playlists.clone()
     };
     let user_input = args.user.clone().or(config.user);
+    let overrides_path = match args
+        .overrides
+        .clone()
+        .or_else(|| config.overrides_file.as_deref().map(expand_tilde))
+    {
+        Some(p) => Some(p),
+        None => dirs::config_dir().map(|d| d.join("digshelf").join("overrides.toml")),
+    };
+    let overrides = match &overrides_path {
+        Some(p) => Overrides::load(p)?,
+        None => Overrides::default(),
+    };
     if playlist_inputs.is_empty() && user_input.is_none() {
         bail!("nothing to do: pass --playlist <URL|ID> and/or --user <ID> (or set them in the config file)");
     }
@@ -215,8 +234,16 @@ async fn scan(cli: &Cli, args: &ScanArgs) -> Result<()> {
         &ReportOptions {
             match_config: MatchConfig::default(),
             qobuz_locale: &qobuz_locale,
+            overrides: &overrides,
         },
     );
+    for e in &report.stale_overrides {
+        eprintln!(
+            "warning: override for Deezer track {} points to a file that is no longer in the library: {}",
+            e.deezer_id,
+            e.file.as_deref().unwrap_or(Path::new("")).display()
+        );
+    }
     let written = write_all(&report, &out)?;
 
     eprintln!();
@@ -233,6 +260,13 @@ async fn scan(cli: &Cli, args: &ScanArgs) -> Result<()> {
         "\nTotal: {} owned, {} uncertain, {} missing",
         report.owned, report.uncertain, report.missing
     );
+    if let Some(p) = &overrides_path {
+        eprintln!(
+            "Overrides: {} ({} entries)",
+            p.display(),
+            overrides.entries().len()
+        );
+    }
     println!("{}", written.report.display());
     println!("{}", written.csv.display());
     for p in &written.playlists {
@@ -303,7 +337,7 @@ mod tests {
     #[test]
     fn config_parses() {
         let c: Config = toml::from_str(
-            "music_dir = \"~/Music/Library\"\nuser = \"3\"\nplaylists = [\"1\"]\nqobuz_locale = \"gb-en\"",
+            "music_dir = \"~/Music/Library\"\nuser = \"3\"\nplaylists = [\"1\"]\nqobuz_locale = \"gb-en\"\noverrides_file = \"~/o.toml\"",
         )
         .unwrap();
         assert_eq!(c.playlists, ["1"]);

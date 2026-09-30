@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use digshelf_core::export::{render_m3u8, write_all};
 use digshelf_core::matcher::MatchConfig;
 use digshelf_core::model::{DeezerTrack, LocalTrack, MatchStatus, Playlist, PlaylistSource};
+use digshelf_core::overrides::{Overrides, TrackInfo};
 use digshelf_core::report::{build_report, ReportOptions};
 
 fn dz(
@@ -137,10 +138,13 @@ fn fixture() -> (Vec<Playlist>, Vec<LocalTrack>) {
     (playlists, library)
 }
 
+static NO_OVERRIDES: std::sync::LazyLock<Overrides> = std::sync::LazyLock::new(Overrides::default);
+
 fn opts() -> ReportOptions<'static> {
     ReportOptions {
         match_config: MatchConfig::default(),
         qobuz_locale: "us-en",
+        overrides: &NO_OVERRIDES,
     }
 }
 
@@ -217,4 +221,59 @@ fn writes_all_outputs() {
     assert!(html.contains("/Music/Vela Nine/02 Low Tide (Dub).mp3"));
     assert!(html.contains("version 30% · Δ0s"));
     assert!(!html.contains("<script src"), "self-contained");
+}
+
+#[test]
+fn overrides_flow_into_report_and_m3u8() {
+    let (playlists, library) = fixture();
+    let mut ov = Overrides::default();
+    // Accept the uncertain "Low Tide" candidate (a dub mix), reject the ISRC match,
+    // and point an override at a file MediaMonkey has since moved.
+    ov.accept(
+        502,
+        "/Music/Vela Nine/02 Low Tide (Dub).mp3".into(),
+        TrackInfo::default(),
+    );
+    ov.reject(501, None, TrackInfo::default());
+    ov.map(
+        504,
+        "/Music/moved/Glass Rooms.mp3".into(),
+        TrackInfo::default(),
+    );
+    let o = ReportOptions {
+        overrides: &ov,
+        ..opts()
+    };
+    let r = build_report(&playlists, &library, &o);
+    let pl = &r.playlists[0];
+    use MatchStatus::*;
+    let statuses: Vec<_> = pl.rows.iter().map(|r| r.status).collect();
+    assert_eq!(statuses, [Missing, Owned, Missing, Missing, Owned]);
+    assert!(pl.rows[0].rejected_by_user);
+    assert_eq!(
+        pl.rows[1].matched.as_ref().unwrap().method,
+        digshelf_core::model::MatchMethod::Manual
+    );
+    assert_eq!(r.stale_overrides.len(), 1);
+    assert_eq!(r.stale_overrides[0].deezer_id, 504);
+    let m3u = render_m3u8(pl);
+    assert!(m3u.contains("/Music/Vela Nine/02 Low Tide (Dub).mp3\n"));
+    assert!(!m3u.contains("Night Drive.flac"));
+}
+
+#[test]
+fn uncertain_rows_carry_pasteable_snippets() {
+    let (playlists, library) = fixture();
+    let r = build_report(&playlists, &library, &opts());
+    let row = &r.playlists[0].rows[1];
+    assert_eq!(row.status, MatchStatus::Uncertain);
+    let s = row.snippets.as_ref().unwrap();
+    for text in [&s.accept, &s.reject_file, &s.reject_track] {
+        let parsed = Overrides::parse(text).unwrap();
+        assert_eq!(parsed.entries()[0].deezer_id, 502);
+    }
+    assert!(
+        r.playlists[0].rows[0].snippets.is_none(),
+        "owned rows need none"
+    );
 }
