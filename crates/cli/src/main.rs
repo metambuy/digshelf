@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -13,7 +12,7 @@ use digshelf_core::export::write_all;
 use digshelf_core::http::ReqwestTransport;
 use digshelf_core::library;
 use digshelf_core::matcher::MatchConfig;
-use digshelf_core::model::{Playlist, Progress};
+use digshelf_core::model::Progress;
 use digshelf_core::report::{build_report, ReportOptions};
 use digshelf_core::stores::DEFAULT_QOBUZ_LOCALE;
 
@@ -129,6 +128,12 @@ fn print_progress(p: Progress) {
     let mut err = std::io::stderr();
     let _ = match p {
         Progress::FetchingPlaylist { id } => write!(err, "\r\x1b[2KFetching playlist {id}…"),
+        Progress::FetchingUser { id } => {
+            writeln!(err, "\r\x1b[2KFetching favourites and playlists of user {id}…")
+        }
+        Progress::SkippedPlaylist { title, error } => {
+            writeln!(err, "\r\x1b[2K  skipping {title:?}: {error}")
+        }
         Progress::FetchedPlaylist { title, tracks } => {
             writeln!(err, "\r\x1b[2K  {title}: {tracks} tracks")
         }
@@ -195,7 +200,9 @@ async fn scan(cli: &Cli, args: &ScanArgs) -> Result<()> {
         if args.refresh {
             client = client.with_list_ttl(Some(Duration::ZERO));
         }
-        fetch_playlists(&client, &playlist_ids, user_id).await?
+        client
+            .fetch_all(&playlist_ids, user_id, &print_progress)
+            .await?
     };
 
     eprintln!("Scanning {} (read-only)…", music.display());
@@ -232,56 +239,6 @@ async fn scan(cli: &Cli, args: &ScanArgs) -> Result<()> {
         println!("{}", p.display());
     }
     Ok(())
-}
-
-async fn fetch_playlists(
-    client: &DeezerClient<'_, ReqwestTransport>,
-    playlist_ids: &[u64],
-    user_id: Option<u64>,
-) -> Result<Vec<Playlist>> {
-    let mut playlists = Vec::new();
-    let mut seen = HashSet::new();
-
-    for &id in playlist_ids {
-        if seen.insert(id) {
-            let pl = client
-                .playlist(id, &print_progress)
-                .await
-                .with_context(|| format!("cannot fetch playlist {id} (is it public?)"))?;
-            playlists.push(pl);
-        }
-    }
-
-    if let Some(uid) = user_id {
-        eprintln!("Fetching favourites and playlists of user {uid}…");
-        let fav = client
-            .user_favourites(uid, &print_progress)
-            .await
-            .with_context(|| format!("cannot fetch favourites of user {uid} (are they public?)"))?;
-        playlists.push(fav);
-        let lists = client
-            .user_playlists(uid)
-            .await
-            .with_context(|| format!("cannot list playlists of user {uid}"))?;
-        for summary in lists {
-            // "Loved tracks" duplicates the favourites fetched above.
-            if summary.is_loved_tracks || !seen.insert(summary.id) {
-                continue;
-            }
-            match client.playlist(summary.id, &print_progress).await {
-                Ok(pl) => playlists.push(pl),
-                Err(e) => eprintln!("\r\x1b[2K  skipping {:?}: {e}", summary.title),
-            }
-        }
-    }
-
-    client
-        .fill_missing_isrc(
-            playlists.iter_mut().flat_map(|p| p.tracks.iter_mut()),
-            &print_progress,
-        )
-        .await?;
-    Ok(playlists)
 }
 
 fn truncate(s: &str, max: usize) -> String {

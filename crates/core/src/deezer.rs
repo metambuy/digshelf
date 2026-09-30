@@ -333,6 +333,72 @@ impl<'c, T: Transport> DeezerClient<'c, T> {
             .collect())
     }
 
+    /// Fetch explicit playlists, then (for `user_id`) the user's favourites and
+    /// public playlists, skipping duplicates and the built-in "Loved tracks"
+    /// list. Finally fills in missing ISRCs. A user playlist that fails is
+    /// reported as [`Progress::SkippedPlaylist`] rather than aborting.
+    pub async fn fetch_all(
+        &self,
+        playlist_ids: &[u64],
+        user_id: Option<u64>,
+        progress: &dyn Fn(Progress),
+    ) -> Result<Vec<Playlist>> {
+        let context = |what: String| {
+            move |e: Error| Error::Fetch {
+                what,
+                source: Box::new(e),
+            }
+        };
+        let mut playlists = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
+        for &id in playlist_ids {
+            if seen.insert(id) {
+                let pl = self
+                    .playlist(id, progress)
+                    .await
+                    .map_err(context(format!("playlist {id} (is it public?)")))?;
+                playlists.push(pl);
+            }
+        }
+
+        if let Some(uid) = user_id {
+            progress(Progress::FetchingUser { id: uid });
+            let fav = self
+                .user_favourites(uid, progress)
+                .await
+                .map_err(context(format!(
+                    "favourites of user {uid} (are they public?)"
+                )))?;
+            playlists.push(fav);
+            let lists = self
+                .user_playlists(uid)
+                .await
+                .map_err(context(format!("playlists of user {uid}")))?;
+            for summary in lists {
+                // "Loved tracks" duplicates the favourites fetched above.
+                if summary.is_loved_tracks || !seen.insert(summary.id) {
+                    continue;
+                }
+                match self.playlist(summary.id, progress).await {
+                    Ok(pl) => playlists.push(pl),
+                    Err(e @ Error::RateLimited { .. }) => return Err(e),
+                    Err(e) => progress(Progress::SkippedPlaylist {
+                        title: summary.title,
+                        error: e.to_string(),
+                    }),
+                }
+            }
+        }
+
+        self.fill_missing_isrc(
+            playlists.iter_mut().flat_map(|p| p.tracks.iter_mut()),
+            progress,
+        )
+        .await?;
+        Ok(playlists)
+    }
+
     /// Fill in ISRCs (and durations) from `/track/{id}` for tracks that lack
     /// them. Individual lookup failures are skipped, not fatal.
     pub async fn fill_missing_isrc<'t>(

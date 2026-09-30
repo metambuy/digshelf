@@ -101,6 +101,14 @@ pub enum Progress {
     FetchingPlaylist {
         id: u64,
     },
+    FetchingUser {
+        id: u64,
+    },
+    /// A user playlist that could not be fetched (e.g. private); others continue.
+    SkippedPlaylist {
+        title: String,
+        error: String,
+    },
     FetchedPlaylist {
         title: String,
         tracks: usize,

@@ -17,3 +17,6 @@ dirs = "7.0.0"
 serde = { version = "1.0.229", features = ["derive"] }
 tokio = { version = "1.53.1", features = ["rt", "macros"] }
 toml = "1.1.6"
+
+[dev-dependencies]
+csv = "1.4.0"

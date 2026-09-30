@@ -191,3 +191,57 @@ async fn lists_user_playlists() {
     assert!(lists[0].is_loved_tracks);
     assert_eq!(lists[1].id, 1001);
 }
+
+fn user_stub(playlist_fixture: &str) -> Stub {
+    Stub::default()
+        .route(
+            "https://api.deezer.com/user/77/tracks?index=0&limit=100",
+            "user_77_tracks_0.json",
+        )
+        .route(
+            "https://api.deezer.com/user/77/playlists?index=0&limit=100",
+            "user_77_playlists_0.json",
+        )
+        .route("https://api.deezer.com/track/504", "track_504.json")
+        .route(PL, playlist_fixture)
+        .route(PL_TRACKS_0, "playlist_1001_tracks_0.json")
+        .route(PL_TRACKS_2, "playlist_1001_tracks_2.json")
+}
+
+#[tokio::test]
+async fn fetch_all_dedupes_and_skips_loved_tracks() {
+    let stub = user_stub("playlist_1001.json");
+    let cache = Cache::open_in_memory().unwrap();
+    let client = DeezerClient::new(&stub, &cache);
+    // 1001 is requested explicitly and also listed under the user.
+    let pls = client.fetch_all(&[1001], Some(77), &|_| {}).await.unwrap();
+    let titles: Vec<_> = pls.iter().map(|p| p.title.as_str()).collect();
+    assert_eq!(titles, ["Synthetic Night Mix", "Favourites"]);
+    assert_eq!(stub.calls_to(PL), 1);
+    // Loved-tracks playlist 2001 is never fetched (the stub would panic).
+    assert_eq!(pls[1].tracks[0].isrc.as_deref(), Some("XXCCC2600004"));
+}
+
+#[tokio::test]
+async fn fetch_all_skips_unavailable_user_playlists() {
+    let stub = user_stub("error_no_data.json");
+    let cache = Cache::open_in_memory().unwrap();
+    let client = DeezerClient::new(&stub, &cache);
+    let events = RefCell::new(Vec::new());
+    let pls = client
+        .fetch_all(&[], Some(77), &|p| events.borrow_mut().push(p))
+        .await
+        .unwrap();
+    assert_eq!(pls.len(), 1, "only favourites");
+    assert!(events.borrow().iter().any(|e| matches!(
+        e,
+        digshelf_core::model::Progress::SkippedPlaylist { title, .. } if title == "Synthetic Night Mix"
+    )));
+
+    // An explicitly requested playlist that fails is an error with context.
+    let err = client.fetch_all(&[1001], None, &|_| {}).await.unwrap_err();
+    assert!(
+        err.to_string().starts_with("cannot fetch playlist 1001"),
+        "{err}"
+    );
+}

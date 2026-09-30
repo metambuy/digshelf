@@ -13,6 +13,13 @@ pub enum Error {
         message: String,
     },
 
+    #[error("cannot fetch {what}: {source}")]
+    Fetch {
+        what: String,
+        #[source]
+        source: Box<Error>,
+    },
+
     #[error("Deezer rate limit still exceeded after {attempts} attempts")]
     RateLimited { attempts: u32 },
 

@@ -34,10 +34,10 @@ impl Default for MatchConfig {
     }
 }
 
-const W_TITLE: f64 = 0.40;
-const W_ARTIST: f64 = 0.25;
-const W_VERSION: f64 = 0.20;
-const W_DURATION: f64 = 0.15;
+pub const W_TITLE: f64 = 0.40;
+pub const W_ARTIST: f64 = 0.25;
+pub const W_VERSION: f64 = 0.20;
+pub const W_DURATION: f64 = 0.15;
 const TITLE_GATE: f64 = 0.80;
 const ARTIST_GATE: f64 = 0.70;
 /// Durations further apart than this score 0.
