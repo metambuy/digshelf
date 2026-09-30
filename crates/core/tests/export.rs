@@ -145,6 +145,7 @@ fn opts() -> ReportOptions<'static> {
         match_config: MatchConfig::default(),
         qobuz_locale: "us-en",
         overrides: &NO_OVERRIDES,
+        unreadable: &[],
     }
 }
 
@@ -185,16 +186,44 @@ fn m3u8_is_extended_utf8_with_absolute_paths() {
 #[test]
 fn writes_all_outputs() {
     let (playlists, library) = fixture();
-    let r = build_report(&playlists, &library, &opts());
+    let unreadable = [(
+        PathBuf::from("/Music/broken <1>.mp3"),
+        "failed to parse Mpeg file".to_string(),
+    )];
+    let r = build_report(
+        &playlists,
+        &library,
+        &ReportOptions {
+            unreadable: &unreadable,
+            ..opts()
+        },
+    );
     let dir = tempfile::tempdir().unwrap();
     let w = write_all(&r, dir.path()).unwrap();
 
-    let names: Vec<_> = w
-        .playlists
-        .iter()
-        .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
-        .collect();
-    assert_eq!(names, ["Night _ Mix _b_.m3u8", "Favourites.m3u8"]);
+    let names = |paths: &[PathBuf]| -> Vec<String> {
+        paths
+            .iter()
+            .map(|p| {
+                p.strip_prefix(dir.path())
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect()
+    };
+    assert_eq!(
+        names(&w.playlists),
+        ["Night _ Mix _b_.m3u8", "Favourites.m3u8"]
+    );
+    assert_eq!(
+        names(&w.pages),
+        [
+            "playlists/Night _ Mix _b_.html",
+            "playlists/Favourites.html"
+        ]
+    );
+    assert!(!dir.path().join("report.html").exists());
     for p in &w.playlists {
         let bytes = std::fs::read(p).unwrap();
         assert!(bytes.starts_with(b"#EXTM3U\n"), "no BOM, header first");
@@ -208,19 +237,28 @@ fn writes_all_outputs() {
     assert!(lines[1].starts_with("Night / Mix <b>,uncertain,Vela Nine,Low Tide,"));
     assert!(lines[2].contains(",missing,Vela Nine,Harbour,"));
 
-    let html = std::fs::read_to_string(&w.report).unwrap();
+    // Undo attribute escaping to compare URLs and paths.
+    let decode = |s: String| s.replace("&#x2f;", "/").replace("&amp;", "&");
+    let index = std::fs::read_to_string(&w.index).unwrap();
     assert!(
-        html.contains("Night &#x2f; Mix &lt;b&gt;"),
+        index.contains("Night &#x2f; Mix &lt;b&gt;"),
         "titles are escaped"
     );
-    // Undo attribute escaping to compare URLs and paths.
-    let html = html.replace("&#x2f;", "/").replace("&amp;", "&");
-    assert!(!html.contains("Mix <b>"));
-    assert!(html.contains("data-panel=\"uncertain\""));
-    assert!(html.contains("https://www.beatport.com/search/releases?q=Vela+Nine+Coastal+Lights"));
-    assert!(html.contains("/Music/Vela Nine/02 Low Tide (Dub).mp3"));
-    assert!(html.contains("version 30% · Δ0s"));
-    assert!(!html.contains("<script src"), "self-contained");
+    let index = decode(index);
+    assert!(index.contains(r#"href="playlists/Night%20_%20Mix%20_b_.html""#));
+    assert!(index.contains("Unreadable files"));
+    assert!(index.contains("/Music/broken &lt;1&gt;.mp3"));
+    assert!(index.contains("failed to parse Mpeg file"));
+    assert!(!index.contains("<script src"), "self-contained");
+
+    let page = decode(std::fs::read_to_string(&w.pages[0]).unwrap());
+    assert!(page.contains(r#"href="../index.html""#));
+    assert!(page.contains("<style>"), "CSS inlined in every page");
+    assert!(page.contains("data-panel=\"uncertain\""));
+    assert!(page.contains("https://www.beatport.com/search/releases?q=Vela+Nine+Coastal+Lights"));
+    assert!(page.contains("/Music/Vela Nine/02 Low Tide (Dub).mp3"));
+    assert!(page.contains("version 30% · Δ0s"));
+    assert!(page.contains("deezer_id = 502"), "override snippets");
 }
 
 #[test]

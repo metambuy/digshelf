@@ -235,6 +235,7 @@ async fn scan(cli: &Cli, args: &ScanArgs) -> Result<()> {
             match_config: MatchConfig::default(),
             qobuz_locale: &qobuz_locale,
             overrides: &overrides,
+            unreadable: &scan.unreadable,
         },
     );
     for e in &report.stale_overrides {
@@ -267,7 +268,13 @@ async fn scan(cli: &Cli, args: &ScanArgs) -> Result<()> {
             overrides.entries().len()
         );
     }
-    println!("{}", written.report.display());
+    if !report.unreadable.is_empty() {
+        eprintln!(
+            "{} library files could not be read (listed in index.html)",
+            report.unreadable.len()
+        );
+    }
+    println!("{}", written.index.display());
     println!("{}", written.csv.display());
     for p in &written.playlists {
         println!("{}", p.display());

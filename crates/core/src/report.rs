@@ -85,12 +85,22 @@ pub struct Report {
     /// Accept/map overrides whose file is no longer in the library (for
     /// tracks in this run). Those tracks were matched automatically instead.
     pub stale_overrides: Vec<OverrideEntry>,
+    /// Library files whose tags could not be read.
+    pub unreadable: Vec<UnreadableFile>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct UnreadableFile {
+    pub path: std::path::PathBuf,
+    pub error: String,
 }
 
 pub struct ReportOptions<'a> {
     pub match_config: MatchConfig,
     pub qobuz_locale: &'a str,
     pub overrides: &'a Overrides,
+    /// From [`crate::library::ScanResult::unreadable`].
+    pub unreadable: &'a [(std::path::PathBuf, String)],
 }
 
 fn snippets(t: &DeezerTrack, file: &std::path::Path) -> OverrideSnippets {
@@ -122,6 +132,14 @@ pub fn build_report(
         uncertain: 0,
         missing: 0,
         stale_overrides: Vec::new(),
+        unreadable: opts
+            .unreadable
+            .iter()
+            .map(|(path, error)| UnreadableFile {
+                path: path.clone(),
+                error: error.clone(),
+            })
+            .collect(),
     };
 
     for pl in playlists {

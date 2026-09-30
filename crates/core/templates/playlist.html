@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>{{ pl.title }} · digshelf</title>
+{% include "_style.html" %}
+</head>
+<body>
+<div class="wrap">
+<a class="back" href="../index.html">← All playlists</a>
+<section class="pl">
+  <h2>{{ pl.title }}</h2>
+  <div class="meta">{{ pl.rows|length }} tracks · <a href="{{ pl.link }}" rel="noreferrer">Open on Deezer</a></div>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" data-tab="missing" aria-selected="true">Missing<span class="n">{{ pl.missing }}</span></button>
+    <button role="tab" data-tab="uncertain" aria-selected="false">Uncertain<span class="n">{{ pl.uncertain }}</span></button>
+    <button role="tab" data-tab="owned" aria-selected="false">Owned<span class="n">{{ pl.owned }}</span></button>
+  </div>
+
+  <div class="panel" data-panel="missing">
+  {% for al in pl.missing_albums %}
+    <div class="album">
+      <h3>{{ al.album or "Unknown album" }} <small>— {{ al.artist }}</small></h3>
+      <div class="links">
+        <span class="meta">Album:</span>
+        <a href="{{ al.links.bandcamp }}" target="_blank" rel="noreferrer">Bandcamp</a>
+        <a href="{{ al.links.qobuz }}" target="_blank" rel="noreferrer">Qobuz</a>
+        <a href="{{ al.links.beatport }}" target="_blank" rel="noreferrer">Beatport</a>
+      </div>
+      <ol>
+      {% for row in al.tracks %}
+        <li>
+          {{ row.track.title }}
+          <span class="meta">{{ row.track.duration|mmss }}{% if row.track.isrc %} · {{ row.track.isrc }}{% endif %}{% if row.rejected_by_user %} · marked not owned in overrides{% endif %}</span>
+          <span class="links">
+            <a href="{{ row.links.bandcamp }}" target="_blank" rel="noreferrer">Bandcamp</a>
+            <a href="{{ row.links.qobuz }}" target="_blank" rel="noreferrer">Qobuz</a>
+            <a href="{{ row.links.beatport }}" target="_blank" rel="noreferrer">Beatport</a>
+            <a href="{{ row.track.link }}" target="_blank" rel="noreferrer">Deezer</a>
+          </span>
+        </li>
+      {% endfor %}
+      </ol>
+    </div>
+  {% else %}
+    <p class="empty">Nothing missing.</p>
+  {% endfor %}
+  </div>
+
+  <div class="panel" data-panel="uncertain" hidden>
+  {% set rows = pl.rows|selectattr("status", "eq", "uncertain")|list %}
+  {% if rows %}
+    <p class="note">Possible matches that were not accepted automatically. Check them, fix the tags in MediaMonkey if needed, and re-run.</p>
+    <div class="scroll"><table>
+      <thead><tr><th>#</th><th>Deezer</th><th>Best local candidate</th><th class="hide-sm">Score</th><th>Buy</th></tr></thead>
+      <tbody>
+      {% for row in rows %}
+        {% set m = row.matched %}
+        <tr>
+          <td class="num">{{ row.position + 1 }}</td>
+          <td>{{ row.track.artist }} – {{ row.track.title }}<br><span class="meta">{{ row.track.duration|mmss }}</span></td>
+          <td>{{ m.file.artist or "?" }} – {{ m.file.title or "?" }}
+            <span class="meta">{{ m.file.duration_ms|ms_mmss }}</span>
+            <div class="path">{{ m.file.path }}</div></td>
+          <td class="hide-sm">
+            <span class="badge warn">{{ m.confidence|pct }}</span>
+            {% if m.scores %}<div class="meta">title {{ m.scores.title|pct }} · artist {{ m.scores.artist|pct }} · version {{ m.scores.version|pct }}{% if m.scores.duration_delta is not none %} · Δ{{ m.scores.duration_delta }}s{% endif %}</div>{% endif %}
+          </td>
+          <td><span class="links">
+            <a href="{{ row.links.bandcamp }}" target="_blank" rel="noreferrer">Bandcamp</a>
+            <a href="{{ row.links.qobuz }}" target="_blank" rel="noreferrer">Qobuz</a>
+            <a href="{{ row.links.beatport }}" target="_blank" rel="noreferrer">Beatport</a>
+          </span></td>
+        </tr>
+        {% if row.snippets %}
+        <tr class="snip"><td></td><td colspan="4">
+          <details><summary>Decide: paste into your overrides file</summary>
+            <div class="snips">
+              <div><b>Same track</b><pre>{{ row.snippets.accept }}</pre></div>
+              <div><b>Wrong file</b><pre>{{ row.snippets.reject_file }}</pre></div>
+              <div><b>Not owned</b><pre>{{ row.snippets.reject_track }}</pre></div>
+            </div>
+          </details>
+        </td></tr>
+        {% endif %}
+      {% endfor %}
+      </tbody>
+    </table></div>
+  {% else %}
+    <p class="empty">No uncertain matches.</p>
+  {% endif %}
+  </div>
+
+  <div class="panel" data-panel="owned" hidden>
+  {% set rows = pl.rows|selectattr("status", "eq", "owned")|list %}
+  {% if rows %}
+    <div class="scroll"><table>
+      <thead><tr><th>#</th><th>Track</th><th>File</th><th class="hide-sm">Match</th></tr></thead>
+      <tbody>
+      {% for row in rows %}
+        <tr>
+          <td class="num">{{ row.position + 1 }}</td>
+          <td>{{ row.track.artist }} – {{ row.track.title }}</td>
+          <td class="path">{{ row.matched.file.path }}</td>
+          <td class="hide-sm">{% if row.matched.method == "isrc" %}<span class="badge isrc">ISRC</span>{% elif row.matched.method == "manual" %}<span class="badge isrc">Manual</span>{% else %}<span class="badge">{{ row.matched.confidence|pct }}</span>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  {% else %}
+    <p class="empty">No owned tracks yet.</p>
+  {% endif %}
+  </div>
+</section>
+</div>
+<script>
+document.addEventListener("click", function (e) {
+  var btn = e.target.closest(".tabs button");
+  if (!btn) return;
+  var section = btn.closest("section");
+  section.querySelectorAll(".tabs button").forEach(function (b) {
+    b.setAttribute("aria-selected", b === btn ? "true" : "false");
+  });
+  section.querySelectorAll(".panel").forEach(function (p) {
+    p.hidden = p.dataset.panel !== btn.dataset.tab;
+  });
+});
+</script>
+</body>
+</html>

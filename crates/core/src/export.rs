@@ -6,36 +6,58 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use minijinja::Environment;
+use serde::Serialize;
 
 use crate::error::{Error, Result};
 use crate::model::MatchStatus;
 use crate::report::{PlaylistReport, Report};
 
-const REPORT_TEMPLATE: &str = include_str!("../templates/report.html");
+const STYLE_TEMPLATE: &str = include_str!("../templates/_style.html");
+const INDEX_TEMPLATE: &str = include_str!("../templates/index.html");
+const PLAYLIST_TEMPLATE: &str = include_str!("../templates/playlist.html");
+
+/// Folder (inside the output dir) holding one HTML page per playlist.
+pub const PAGES_DIR: &str = "playlists";
 
 /// Paths of the files written by [`write_all`].
 #[derive(Debug, Default)]
 pub struct Written {
-    pub report: PathBuf,
+    pub index: PathBuf,
+    /// One HTML page per playlist, in report order.
+    pub pages: Vec<PathBuf>,
     pub csv: PathBuf,
+    /// One `.m3u8` per playlist, in report order.
     pub playlists: Vec<PathBuf>,
 }
 
+/// Write `index.html`, `playlists/<name>.html`, `missing.csv` and
+/// `<name>.m3u8` into `out_dir`.
 pub fn write_all(report: &Report, out_dir: &Path) -> Result<Written> {
-    std::fs::create_dir_all(out_dir).map_err(|e| Error::io(out_dir, e))?;
-    let mut written = Written {
-        report: out_dir.join("report.html"),
-        csv: out_dir.join("missing.csv"),
-        playlists: Vec::new(),
-    };
-    write_file(&written.report, &render_html(report)?)?;
-    write_file(&written.csv, &render_csv(report)?)?;
+    let pages_dir = out_dir.join(PAGES_DIR);
+    std::fs::create_dir_all(&pages_dir).map_err(|e| Error::io(&pages_dir, e))?;
+    let env = environment()?;
 
     let mut used = HashSet::new();
-    for pl in &report.playlists {
-        let path = out_dir.join(unique_file_name(pl, &mut used));
-        write_file(&path, &render_m3u8(pl))?;
-        written.playlists.push(path);
+    let stems: Vec<String> = report
+        .playlists
+        .iter()
+        .map(|pl| unique_stem(pl, &mut used))
+        .collect();
+
+    let mut written = Written {
+        index: out_dir.join("index.html"),
+        csv: out_dir.join("missing.csv"),
+        ..Written::default()
+    };
+    write_file(&written.index, &render_index(&env, report, &stems)?)?;
+    write_file(&written.csv, &render_csv(report)?)?;
+    for (pl, stem) in report.playlists.iter().zip(&stems) {
+        let page = pages_dir.join(format!("{stem}.html"));
+        write_file(&page, &render_playlist(&env, pl)?)?;
+        written.pages.push(page);
+        let m3u = out_dir.join(format!("{stem}.m3u8"));
+        write_file(&m3u, &render_m3u8(pl))?;
+        written.playlists.push(m3u);
     }
     Ok(written)
 }
@@ -44,10 +66,12 @@ fn write_file(path: &Path, contents: &str) -> Result<()> {
     std::fs::write(path, contents).map_err(|e| Error::io(path, e))
 }
 
-pub fn render_html(report: &Report) -> Result<String> {
+fn environment() -> Result<Environment<'static>> {
     let mut env = Environment::new();
-    // `.html` name enables HTML auto-escaping.
-    env.add_template("report.html", REPORT_TEMPLATE)?;
+    // `.html` names enable HTML auto-escaping.
+    env.add_template("_style.html", STYLE_TEMPLATE)?;
+    env.add_template("index.html", INDEX_TEMPLATE)?;
+    env.add_template("playlist.html", PLAYLIST_TEMPLATE)?;
     env.add_filter("mmss", |secs: Option<u32>| match secs {
         Some(s) => format!("{}:{:02}", s / 60, s % 60),
         None => "–".to_string(),
@@ -60,7 +84,62 @@ pub fn render_html(report: &Report) -> Result<String> {
         None => "–".to_string(),
     });
     env.add_filter("pct", |x: f64| format!("{:.0}%", x * 100.0));
-    Ok(env.get_template("report.html")?.render(report)?)
+    Ok(env)
+}
+
+#[derive(Serialize)]
+struct PageLink<'a> {
+    title: &'a str,
+    href: String,
+    owned: usize,
+    uncertain: usize,
+    missing: usize,
+    total: usize,
+}
+
+fn render_index(env: &Environment, report: &Report, stems: &[String]) -> Result<String> {
+    let pages: Vec<PageLink> = report
+        .playlists
+        .iter()
+        .zip(stems)
+        .map(|(pl, stem)| PageLink {
+            title: &pl.title,
+            href: format!("{PAGES_DIR}/{}.html", encode_segment(stem)),
+            owned: pl.owned,
+            uncertain: pl.uncertain,
+            missing: pl.missing,
+            total: pl.rows.len(),
+        })
+        .collect();
+    let ctx = minijinja::context! {
+        pages,
+        library_files => report.library_files,
+        owned => report.owned,
+        uncertain => report.uncertain,
+        missing => report.missing,
+        stale_overrides => &report.stale_overrides,
+        unreadable => &report.unreadable,
+    };
+    Ok(env.get_template("index.html")?.render(ctx)?)
+}
+
+fn render_playlist(env: &Environment, pl: &PlaylistReport) -> Result<String> {
+    Ok(env
+        .get_template("playlist.html")?
+        .render(minijinja::context! { pl })?)
+}
+
+/// Percent-encode a file name for use in a relative URL.
+fn encode_segment(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+            out.push(b as char);
+        } else {
+            let _ = write!(out, "%{b:02X}");
+        }
+    }
+    out
 }
 
 /// One row per missing or uncertain (playlist, track).
@@ -149,8 +228,9 @@ pub fn render_m3u8(pl: &PlaylistReport) -> String {
     s
 }
 
-/// A safe, unique `.m3u8` file name for a playlist.
-fn unique_file_name(pl: &PlaylistReport, used: &mut HashSet<String>) -> String {
+/// A safe file-name stem for a playlist, unique (case-insensitively) within
+/// one run. Shared by the `.m3u8` and the HTML page.
+fn unique_stem(pl: &PlaylistReport, used: &mut HashSet<String>) -> String {
     let cleaned: String = pl
         .title
         .chars()
@@ -169,10 +249,9 @@ fn unique_file_name(pl: &PlaylistReport, used: &mut HashSet<String>) -> String {
     if stem.is_empty() {
         stem = format!("playlist-{}", pl.id);
     }
-    let mut name = format!("{stem}.m3u8");
-    if !used.insert(name.to_lowercase()) {
-        name = format!("{stem} ({}).m3u8", pl.id);
-        used.insert(name.to_lowercase());
+    if !used.insert(stem.to_lowercase()) {
+        stem = format!("{stem} ({})", pl.id);
+        used.insert(stem.to_lowercase());
     }
-    name
+    stem
 }

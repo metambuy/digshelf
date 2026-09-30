@@ -152,6 +152,7 @@ async fn main() -> Result<()> {
             qobuz_locale: "us-en",
             // Measure the matcher itself, without user decisions.
             overrides: &Overrides::default(),
+            unreadable: &scan.unreadable,
         },
     );
 

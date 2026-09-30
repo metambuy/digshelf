@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>digshelf report</title>
+{% include "_style.html" %}
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>digshelf report</h1>
+  <p class="note">Store links open search pages in your browser. digshelf never downloads audio, scrapes stores or makes purchases.</p>
+  <div class="totals">
+    <div class="stat"><b>{{ pages|length }}</b><span>Playlists</span></div>
+    <div class="stat"><b>{{ library_files }}</b><span>Library files</span></div>
+    <div class="stat owned"><b>{{ owned }}</b><span>Owned</span></div>
+    <div class="stat uncertain"><b>{{ uncertain }}</b><span>Uncertain</span></div>
+    <div class="stat missing"><b>{{ missing }}</b><span>Missing</span></div>
+  </div>
+</header>
+
+<section class="pl">
+<div class="scroll"><table class="lists">
+  <thead><tr><th>Playlist</th><th>Owned</th><th>Uncertain</th><th>Missing</th><th class="hide-sm"></th></tr></thead>
+  <tbody>
+  {% for p in pages %}
+    <tr>
+      <td><a href="{{ p.href }}">{{ p.title }}</a></td>
+      <td class="n">{{ p.owned }}</td>
+      <td class="n">{{ p.uncertain }}</td>
+      <td class="n">{{ p.missing }}</td>
+      <td class="hide-sm">{% if p.total > 0 %}<div class="bar">
+        <i class="o" style="width: {{ p.owned * 100 / p.total }}%"></i>
+        <i class="u" style="width: {{ p.uncertain * 100 / p.total }}%"></i>
+        <i class="m" style="width: {{ p.missing * 100 / p.total }}%"></i>
+      </div>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+</section>
+
+{% if stale_overrides %}
+<h2 class="sec" id="stale">Stale overrides <span class="badge warn">{{ stale_overrides|length }}</span></h2>
+<section class="pl">
+  <p class="note">These accept/map entries point to files that are no longer in the library (moved or deleted?). The tracks were matched automatically instead. Update the paths in your overrides file.</p>
+  <div class="scroll"><table>
+    <thead><tr><th>Deezer ID</th><th>Track</th><th>File</th></tr></thead>
+    <tbody>
+    {% for e in stale_overrides %}
+      <tr><td class="num">{{ e.deezer_id }}</td><td>{{ e.artist or "" }} – {{ e.title or "" }}</td><td class="path">{{ e.file }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+{% endif %}
+
+<h2 class="sec" id="unreadable">Unreadable files <span class="badge">{{ unreadable|length }}</span></h2>
+<section class="pl">
+{% if unreadable %}
+  <p class="note">Tags could not be read from these files, so they are matched by file name only. They may be damaged; check them in MediaMonkey.</p>
+  <details><summary>Show {{ unreadable|length }} files</summary>
+  <div class="scroll"><table>
+    <thead><tr><th>File</th><th>Error</th></tr></thead>
+    <tbody>
+    {% for f in unreadable %}
+      <tr><td class="path">{{ f.path }}</td><td class="meta">{{ f.error }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  </details>
+{% else %}
+  <p class="empty">All files could be read.</p>
+{% endif %}
+</section>
+</div>
+</body>
+</html>
